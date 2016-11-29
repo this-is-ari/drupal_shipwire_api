@@ -12,7 +12,8 @@ function shipwire_admin_account_settings() {
   $form = array();
 
   $operational = Shipwire::operational();
-
+  $account = variable_get('shipwire_account');
+  $account = explode(':', $account);
   $form['server'] = array(
     '#type' => 'fieldset',
     '#title' => t('Server settings'),
@@ -28,12 +29,14 @@ function shipwire_admin_account_settings() {
     '#title' => t('Email address'),
     '#description' => t('Shipwire account email address.'),
     '#required' => !$operational,
+    '#default_value' => $account[0],
   );
   $form['server']['shipwire_password'] = array(
     '#type' => 'password',
     '#title' => t('Password'),
     '#description' => t('Shipwire account password.'),
     '#required' => !$operational,
+    '#default_value' => $account[1],
   );
   $form['server']['shipwire_server'] = array(
     '#type' => 'select',
@@ -78,6 +81,7 @@ function shipwire_admin_account_settings_validate($form, &$form_state) {
   if (!empty($username) && empty($password)) {
     form_set_error('shipwire_password', t('Password must be provided when username is provided.'));
   }
+
 }
 
 /**
@@ -92,8 +96,6 @@ function shipwire_admin_account_settings_submit($form, &$form_state) {
     $username = filter_xss($fsv['shipwire_username']);
     $password = filter_xss($fsv['shipwire_password']);
     $shipwire->accountSave($username, $password);
-
-    unset($fsv['shipwire_username'], $fsv['shipwire_password']);
   }
 }
 
