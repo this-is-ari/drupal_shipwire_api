@@ -17,7 +17,7 @@ class Shipwire {
 
   /**
    * Load an instance of the class.
-   * 
+   *
    * @return Shipwire
    *   The loaded instance of Shipwire.
    */
@@ -34,7 +34,8 @@ class Shipwire {
   protected function __construct() {
     self::$server = variable_get('shipwire_response', 'Test');
     $endpoint = variable_get('shipwire_server', 'Test');
-    self::$endpoint = ($endpoint == 'Test') ? 'https://api.beta.shipwire.com/exec/' : 'https://api.shipwire.com/exec/';
+    $account = variable_get('shipwire_account');
+    self::$endpoint = ($endpoint == 'Test') ? "https://{$account}@api.beta.shipwire.com/api/v3/" : "https://{$account}@api.shipwire.com/api/v3/";
   }
 
   /**
@@ -46,87 +47,160 @@ class Shipwire {
 
   /**
    * Sends API request for order fulfillment.
-   * 
+   *
    * @param ShipwireFulfillRequest $request
    *   The populated fulfillment request.
-   * 
+   *
    * @return FALSE|array
    *   FALSE on error or response array on success.
    */
   public function requestFulfillment(ShipwireFulfillRequest $request) {
     $request->validate();
     if (self::operational()) {
-      return self::sendRequest('fulfill', self::buildXmlFulfill($request));
+      return self::sendRequest('fulfill', self::buildRestOrder($request), 'POST');
     }
   }
 
   /**
-   * Sends API request for order shipping rate.
-   * 
+    * Sends API request for order shipping rate.
+   *
    * @param ShipwireRateRequest $rate_request
    *   The populated rate request.
-   * 
+   *
    * @return FALSE|array
    *   FALSE on error or response array on success.
    */
   public function requestRate(ShipwireRateRequest $rate_request) {
     $rate_request->validate();
     if (self::operational()) {
-      return self::sendRequest('rate', self::buildXmlRate($rate_request));
+      return self::sendRequest('rate', self::buildRequestRate($rate_request), 'POST');
     }
   }
 
   /**
-   * Sends API request for tracking update.
-   * 
-   * @param ShipwireTrackingRequest $request
-   *   The populated tracking request.
-   * 
-   * @return FALSE|array
-   *   FALSE on error or response array on success.
+   * Transform the route with the given orderId
+   * @param $route
+   * @param null $order_id
+   * @return string
    */
-  public function requestTracking(ShipwireTrackingRequest $request) {
-    $request->validate();
+  private function getRoute($route, $order_id = NULL) {
+    if ($order_id !== NULL) {
+      return strtr($route, ['{id}' => $order_id]);
+    }
+    return $route;
+  }
+
+  /**
+   * @param array $params
+   * @param bool $includeEmpty
+   * @return array
+   * @throws \Exception
+   */
+  public function getStock($params = [], $includeEmpty=false) {
+    if ($includeEmpty){
+      $params['includeEmpty'] = 1;
+    }
+
+    return self::sendRequest('stock', http_build_query($params), 'GET');
+  }
+
+  /**
+   * Cancels an Order
+   * @param $order_id
+   * @return bool
+   */
+  public function cancel($order_id) {
     if (self::operational()) {
-      return self::sendRequest('tracking', self::buildXmlTracking($request));
+      return self::sendRequest('cancel', ' ', 'POST', $order_id);
+    }
+  }
+
+
+  /**
+   * Get the list of holds, if any, on an order
+   * @param $order_id
+   * @return array
+   */
+  public function holds($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('holds', ' ', 'GET', $order_id);
     }
   }
 
   /**
-   * Sends API request for inventory update.
-   * 
-   * @param ShipwireInventoryRequest $request
-   *   The populated inventory request.
-   * 
-   * @return FALSE|array
-   *   FALSE on error or response array on success.
+   * Get the product details for this order
+   * @param $order_id
+   * @return array
    */
-  public function requestInventory(ShipwireInventoryRequest $request) {
-    $request->validate();
+  public function items($order_id) {
     if (self::operational()) {
-      return self::sendRequest('inventory', self::buildXmlInventory($request));
+      return self::sendRequest('items', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * Get related return information for a specific order.
+   * @param $order_id
+   * @return array
+   */
+  public function returns($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('returns', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * Get tracking information for a specific order.
+   * @param $order_id
+   * @return array
+   */
+  public function tracking($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('tracking', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * @param \ShipwireFulfillRequest $request
+   * @param $order_id
+   * @return array
+   * @throws \Exception
+   */
+  public function updateOrder(ShipwireFulfillRequest $request, $order_id) {
+    if (self::operational()) {
+      return self::sendRequest('order_update', self::buildRestOrder($request), 'PUT', $order_id);
+    }
+  }
+
+
+  /**
+   * @param \ShipwireAddress $address
+   * @return array
+   * @throws \Exception
+   */
+  public function adressValidate(ShipwireAddress $address) {
+    if (self::operational()) {
+      $json_adddress = self::buildRestAddressInfo($address);
+      return self::sendRequest('address_validate', $json_adddress, 'GET');
     }
   }
 
   /**
    * Sends API tracking request to test account login.
-   * 
+   *
    * @return array
    *   The response array.
    */
   public function requestTest() {
     try {
-      $request = new ShipwireTrackingRequest();
-      $request->setBookmark(2);
-      $response = self::sendRequest('test', self::buildXmlTracking($request));
-      if ((string) $response['data_xml']->Status == '0') {
+      $response = self::sendRequest('fulfill', '', 'GET');
+      if ($response['data']->status == 200) {
         variable_set('shipwire_operational', TRUE);
       }
       else {
         variable_set('shipwire_operational', FALSE);
       }
-    }
-    catch (Exception $e) {
+    } catch (Exception $e) {
       $message = 'Error testing login';
       Shipwire::logError($message, array(), WATCHDOG_ERROR, $e);
       variable_set('shipwire_operational', FALSE);
@@ -134,88 +208,61 @@ class Shipwire {
   }
 
   /**
-   * Create the beginning of a Shipwire XML request.
-   * 
-   * @param string $name_space
-   *   The Shipwire name space for the request.
-   * 
-   * @return string
-   *   Raw XML header tags string.
-   */
-  protected function buildXMLHead($name_space) {
-    $head = '<?xml version="1.0" encoding="utf-8"?>';
-    $head .= '<!DOCTYPE ' . $name_space . ' SYSTEM "http://www.shipwire.com/exec/download/' . $name_space . '.dtd">';
-    $head .= '<' . $name_space . ' />';
-    return $head;
-  }
-
-  /**
-   * Build the AddressInfo XML.
-   * 
-   * @param Shipwire $xml_element
-   *   The request XML element.
+   * Build the AddressInfo.
    * @param ShipwireAddress $address
    *   A populated Shipwire Address.
    * @param string $method
    *   The type of Shipwire request this address will be used in. Options are:
-   *   'rate' or 'fulfill'. 
+   *   'rate' or 'fulfill'.
    */
-  protected function buildXmlAddressInfo(ShipwireSimpleXMLElement &$xml_element, ShipwireAddress $address, $method = 'rate') {
+  protected function buildRestAddressInfo(ShipwireAddress $address, $method = 'rate') {
     $email_share = variable_get('shipwire_email_share', FALSE);
 
-    $address_info = $xml_element->addChild('AddressInfo');
-    $address_info->addAttribute('type', 'ship');
-    $name = $address_info->addChild('Name');
-    $name->addChildCData('Full', $address->name);
+    $address_info = array();
+    $address_info['name'] = $address->name;
 
     if (!empty($address->company)) {
-      $address_info->addChildCData('Company', $address->company);
+      $address_info['company'] = $address->company;
     }
-    $address_info->addChildCData('Address1', $address->address1);
+    $address_info['address1'] = $address->address1;
     if (!empty($address->address2)) {
-      $address_info->addChildCData('Address2', $address->address2);
+      $address_info['Address2'] = $address->address2;
     }
     if (!empty($address->address3)) {
-      $address_info->addChildCData('Address3', $address->address3);
+      $address_info['address3'] = $address->address3;
     }
-    $address_info->addChildCData('City', $address->city);
+    $address_info['city'] = $address->city;
     if (!empty($address->state)) {
-      $address_info->addChildCData('State', $address->state);
+      $address_info['state'] = $address->state;
     }
-    $address_info->addChildCData('Country', $address->country);
+    $address_info['country'] = $address->country;
     // Is postal required?
     if (!empty($address->postal)) {
-      $address_info->addChildCData('Zip', $address->postal);
+      $address_info['postalCode'] = $address->postal;
     }
     if (!empty($address->phone) && $method == 'fulfill') {
-      $address_info->addChildCData('Phone', $address->phone);
+      $address_info['phone'] = $address->phone;
     }
     if ($email_share && !empty($address->email) && $method == 'fulfill') {
-      $address_info->addChildCData('Email', $address->email);
+      $address_info['Email'] = $address->email;
     }
-    if (!empty($address->commercial)) {
-      $address_info->addChild('Commercial');
-    }
-    if (!empty($address->pobox)) {
-      $address_info->addChild('PoBox');
-    }
+    $address_info = json_encode($address_info);
+    return $address_info;
   }
 
   /**
-   * Builds XML API request for Order API.
-   * 
+   * Builds REST API request for Order API.
+   *
    * @param ShipwireFulfillRequest $request
    *   The populated request object.
-   * 
+   *
    * @return string
-   *   The raw fulfillment request XML.
+   *   The raw json fulfillment request REST.
    */
-  protected function buildXmlFulfill(ShipwireFulfillRequest $request) {
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('OrderList'));
-    $xml->addLogin(self::accountLoad(), 'fulfill');
-    // The senders company.
-    if (!empty($request->company)) {
-      $xml->addChildCData('Company', $request->company);
+  protected function buildRestOrder(ShipwireFulfillRequest $request) {
+    $data = array();
+    if (isset($request->company) && !empty($request->company)) {
+      $company = $request->company;
     }
 
     $referer = 'Drupal ' . VERSION;
@@ -225,191 +272,106 @@ class Shipwire {
         $referer .= ' ' . $module_info['name'] . ' ' . $module_info['version'];
       }
     }
-    $xml->addChildCData('Referer', $referer);
 
     foreach ($request->orders as $order) {
+      $data['orderNo'] = $order->order_id;
+      $data['externalId'] = $order->order_id;
+      $data['options'] = array(
+        'warehouseId' => $order->warehouse,
+        'warehouseExternalId' => $order->warehouse,
+        'warehouseRegion' => isset($order->warehouse_continents) ? $order->warehouse_continents : '',
+        'warehouseArea' => isset($order->warehouse_country) ? $order->warehouse_country : '',
+      );
+      $data['shipFrom'] = variable_get('site_name');
+      $data['shipTo'] = array(
+        "email" => $order->address->email,
+        "name" => $order->address->name,
+        "address1" => $order->address->address1,
+        "address2" => isset($order->address->address2) ? $order->address->address2 : '',
+        "address3" => isset($order->address->address3) ? $order->address->address2 : '',
+        "city" => isset($order->address->city) ? $order->address->city : '',
+        "state" => isset($order->address->state) ? $order->address->state : '',
+        "postalCode" => isset($order->address->postal) ? $order->address->postal : '',
+        "country" => isset($order->address->country) ? $order->address->country : '',
+        "phone" => isset($order->address->phone) ? $order->address->phone : '',
+        "isCommercial" => !empty($order->address->commercial) ? 1 : 0,
+        "isPoBox" => !empty($order->address->pobox) ? 1 : 0,
+      );
 
-      $xml_order = $xml->addChild('Order');
-      $xml_order->addAttribute('id', $order->order_id);
-
-      if (!empty($order->warehouse)) {
-        $xml_order->addChild('Warehouse', $order->warehouse);
-      }
-
-      self::buildXmlAddressInfo($xml_order, $order->address, 'fulfill');
 
       if (!empty($order->carrier)) {
-        $xml_order->addChildCData('Carrier', $order->carrier);
+        $data['options']['carrierCode'] = $order->carrier;
       }
       elseif (!empty($order->shipping)) {
-        $xml_order->addChild('Shipping', $order->shipping);
+        $data['options']['serviceLevelCode'] = $order->shipping;
       }
 
       $count = 0;
       foreach ($order->products as $product) {
-        $item = $xml_order->addChild('Item');
-        $item->addAttribute('num', $count);
-        $item->addChildCData('Code', $product->sku);
-        $item->addChild('Quantity', $product->quantity);
-        if (!empty($product->currency) && !empty($product->cost)) {
-          $unit_value = $item->addChildCData('UnitValue', $product->cost);
-          $unit_value->addAttribute('currency', $product->currency);
-        }
-        $count++;
+        $data['items'][] = array(
+          "sku" => $product->sku,
+          "quantity" => $product->quantity,
+          "commercialInvoiceValue" => $product->cost,
+          "commercialInvoiceValueCurrency" => $product->currency
+        );
       }
     }
-    return $xml->asXML();
+
+    return json_encode($data);
   }
 
   /**
-   * Build XML for an inventory update request.
-   * 
-   * @return string
-   *   The raw inventory request XML.
-   */
-  protected function buildXmlInventory(ShipwireInventoryRequest $request) {
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('InventoryUpdate'));
-    $xml->addLogin(self::accountLoad(), 'inventory');
-
-    if (!empty($request->warehouse)) {
-      $xml->addChild('Warehouse', $request->warehouse);
-    }
-
-    if (!empty($request->warehouse_continents) && is_array($request->warehouse_continents)) {
-      $warehouse_continents = $xml->addChild('WarehouseContinents');
-      foreach ($request->warehouse_continents as $continent) {
-        $warehouse_continents->addChild('Continent', $continent);
-      }
-    }
-
-    if (!empty($request->warehouse_country)) {
-      $xml->addChild('warehouse_country', $request->warehouse_country);
-    }
-
-    if (!empty($request->products) && is_array($request->products)) {
-      foreach ($request->products as $product) {
-        $xml->addChildCData('ProductCode', $product);
-      }
-    }
-
-    if (!empty($request->include_empty)) {
-      $xml->addChild('IncludeEmpty');
-    }
-
-    return $xml->asXML();
-  }
-
-  /**
-   * Build XML for tracking request.
-   * 
-   * @param ShipwireTrackingRequest $request
-   *   The populated request object.
-   * 
-   * @return string
-   *   The raw tracking request XML.
-   */
-  protected function buildXmlTracking(ShipwireTrackingRequest $request) {
-
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('TrackingUpdate'));
-    $xml->addLogin(self::accountLoad(), 'track');
-
-    switch ($request->method) {
-      case 'bookmark':
-        $bookmark = '3';
-        if (!empty($request->bookmark)) {
-          $bookmark = $request->bookmark;
-        }
-        $xml->addChild('Bookmark', $bookmark);
-        break;
-
-      case 'order_number':
-        foreach ($request->orders as $order) {
-          $xml->addChild('OrderNo', $order);
-        }
-        break;
-
-      case 'shipwire_id':
-        foreach ($request->shipwire_ids as $shipwire_id) {
-          $xml->addChild('ShipwireId', $shipwire_id);
-        }
-        break;
-    }
-
-    if (!empty($request->include_shipped_only)) {
-      $xml->addChild('IncludeShippedOnly');
-    }
-    if (!empty($request->include_held_only)) {
-      $xml->addChild('IncludeHeldOnly');
-    }
-    if (!empty($request->include_holds)) {
-      $xml->addChild('IncludeHolds');
-    }
-    if (!empty($request->include_items)) {
-      $xml->addChild('IncludeItems');
-    }
-    if (!empty($request->include_related_orders)) {
-      $xml->addChild('IncludeRelatedOrders');
-    }
-
-    if (!empty($request->results_limit)) {
-      if (!isset($request->results_offset)) {
-        self::logError(t('Result offset must be provided when result limit is used'), WATCHDOG_ERROR);
-      }
-      else {
-        $xml->addChild('ResultsLimit', $request->results_limit);
-        $xml->addChild('ResultsOffset', $request->results_offset);
-      }
-    }
-
-    return $xml->asXML();
-  }
-
-  /**
-   * Build XML for shipping rates request.
-   * 
+   * Build data for shipping rates request.
+   *
    * @param ShipwireRateRequest $request
    *   The populated request object.
-   * 
+   *
    * @return string
-   *   The raw rate request XML.
+   *   The raw rate request json.
    */
-  protected function buildXmlRate(ShipwireRateRequest $request) {
-
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('RateRequest'));
-    if (!empty($request->rateset)) {
-      $xml->addAttribute('rateset', $request->rateset);
-    }
-    $xml->addAttribute('currency', $request->currency);
-
-    $xml->addLogin(self::accountLoad(), 'rate');
-
+  protected function buildRequestRate(ShipwireRateRequest $request) {
+    $currency = $request->currency;
+    $items = array();
     foreach ($request->orders as $order) {
-      $xml_order = $xml->addChild('Order');
-      $xml_order->addChild('Warehouse', $order->warehouse);
       if (!empty($order->warehouse_continents)) {
         foreach ($order->warehouse_continents as $continent) {
-          $xml_order->addChild('WarehouseContinents', $continent);
+          $WarehouseContinents = $continent;
         }
       }
-
-      self::buildXmlAddressInfo($xml_order, $order->address, 'rate');
-
+      $address = (array) $order->address;
+      foreach ($address as $key => $item) {
+        $new_key = str_replace('*', '', $key);
+        $address_clear[$new_key] = $item;
+      }
       $count = 0;
       foreach ($order->products as $product) {
-        $item = $xml_order->addChild('Item');
-        $item->addAttribute('num', $count);
-        $item->addChildCData('Code', $product->sku);
-        $item->addChild('Quantity', $product->quantity);
+        $items[$count]['sku'] = $product->sku;
+        $items[$count]['quantity'] = $product->quantity;
         $count++;
       }
     }
 
-    return $xml->asXML();
+    $options = [
+      "currency" => $currency,
+      "groupBy" => "all",
+      "canSplit" => 1,
+      "warehouseArea" => !empty($WarehouseContinents) ? $WarehouseContinents : "US",
+    ];
+    $json = json_encode([
+      'options' => $options,
+      'order' => [
+        'shipTo' => $address_clear,
+        'items' => $items,
+      ]
+    ]);
+    $json = str_replace('\u0000', '', $json);
+
+    return $json;
   }
 
   /**
    * Get a list of valid shipping methods used by Shipwire.
-   * 
+   *
    * @return array
    *   Array of translated shipping methods keyed by method code.
    */
@@ -427,10 +389,10 @@ class Shipwire {
 
   /**
    * Get a translated shipping method label for a given shipping method code.
-   * 
+   *
    * @param string $method_code
    *   See getShippingMethods() for a list of valid method codes.
-   * 
+   *
    * @return string
    *   Translated shipping method label.
    */
@@ -445,7 +407,7 @@ class Shipwire {
 
   /**
    * Get a list of valid status codes used by this module.
-   * 
+   *
    * @return array
    *   Array of translated shipment status codes keyed by machine name.
    */
@@ -476,10 +438,10 @@ class Shipwire {
 
   /**
    * Return a translated status label for a given status machine code.
-   * 
+   *
    * @param string $status_code
    *   The statis machine code.
-   * 
+   *
    * @return string
    *   Return empty string or status label.
    */
@@ -494,12 +456,12 @@ class Shipwire {
 
   /**
    * Get a list of warehouse options.
-   * 
+   *
    * @param bool $translated
    *   TRUE to return warehouse names are translated.
    * @param bool $include_auto
    *   TRUE to return warehouse code 00 for auto warehouse selection.
-   * 
+   *
    * @return array
    *   Array of warehouses keyed by warehouse code with value of warehouse name.
    */
@@ -521,15 +483,16 @@ class Shipwire {
         $warehouses[$code] = t($name);
       }
     }
+
     return $warehouses;
   }
 
   /**
    * Return a translated warehouse name given a valid warehouse code.
-   * 
+   *
    * @param string $warehouse_code
    *   The warehouse code. See getWarehouses() for a list of valid codes.
-   * 
+   *
    * @return string
    *   The translated warehouse name.
    */
@@ -544,24 +507,16 @@ class Shipwire {
 
   /**
    * Get a warehouse code using warehouse name.
-   * 
+   *
    * @param string $warehouse_name
    *   The English name of the warehouse.
-   * 
+   *
    * @return string
    *   The warehouse code.
    */
   public static function getWarehouseCode($warehouse_name) {
     $warehouses = self::getWarehouses(FALSE);
     $code = array_search($warehouse_name, $warehouses);
-
-    // Workaround for confirmed bug in Shipwire. Warehouse is supposed to be
-    // full name but in the case of 'Los Angeles' it is returned as 'LA'.
-    // To be fixed by Shipwire.
-    if ($warehouse_name == 'LA') {
-      $code = 'LAX';
-    }
-
     if ($code == FALSE) {
       $code = '';
     }
@@ -570,8 +525,8 @@ class Shipwire {
   }
 
   /**
-   * Return a list of valid warehouse countries. 
-   * 
+   * Return a list of valid warehouse countries.
+   *
    * @return array
    *   Translated warehouse countries keyed by 2 digit ISO country code.
    */
@@ -586,7 +541,7 @@ class Shipwire {
 
   /**
    * Return a list of valid warehouse continets used by Shipwire.
-   * 
+   *
    * @return array
    *   Array of translated warehouse continent keyed by Shipwire continent code.
    */
@@ -604,7 +559,7 @@ class Shipwire {
 
   /**
    * Return a list of translated carrier names and services.
-   * 
+   *
    * @return array
    *   Array of translated carrier names and services keyed by Shipwire carrier
    *   and service code.
@@ -706,10 +661,10 @@ class Shipwire {
 
   /**
    * Get a translated carrier label for a given carrier code.
-   * 
+   *
    * @param string $carrier_code
    *   Carrier code used by Shipwire. See getCarriers() for a full list.
-   * 
+   *
    * @return string
    *   Translated carrier label.
    */
@@ -724,7 +679,7 @@ class Shipwire {
 
   /**
    * List of valid currencies used by Shipwire.
-   * 
+   *
    * @return array
    *   Array of translated currency names keyed by ISO 3 digit currency code.
    */
@@ -899,7 +854,7 @@ class Shipwire {
 
   /**
    * Saves obfuscated account info for better security than plain text.
-   * 
+   *
    * @param string $username
    *   The account username which is an email address.
    * @param string $password
@@ -907,30 +862,15 @@ class Shipwire {
    */
   public function accountSave($username, $password) {
     if (user_access('edit shipwire settings')) {
-
-      $len = strlen($username);
-      $key = trim(self::$app_id, 293570648) + $len;
-      $value = $username . $password;
-
-      while (strlen($key) < 8) {
-        $num = rand(97, 122);
-        $letter = chr($num);
-        if ($num % 2) {
-          $key .= $letter;
-        }
-        else {
-          $key = $letter . $key;
-        }
-      }
-      $value_save = $key . base64_encode($value);
-      variable_set('shipwire_account', $value_save);
+      $value = $username . ':' . $password;
+      variable_set('shipwire_account', $value);
       self::requestTest();
     }
   }
 
   /**
    * Load account info.
-   * 
+   *
    * @return array
    *   An empty array on failure or populated array on success.
    */
@@ -954,113 +894,114 @@ class Shipwire {
 
   /**
    * Send and receive all communication.
-   *
-   * @param string $method
+   * @param $method
    *   The API communication method. Possible values are:
-   *   rate, fulfill, tracking, inventory
+   *   rate, fulfill, tracking, inventory, address_check
    *   Do not use 'test' value which is there only to test login info is correct.
-   * @param string $xml
-   *   The raw XML request string that will be sent to Shipwire.
-   * 
+   * @param $data
+   *   The raw json request string that will be sent to Shipwire.
+   * @param string $request_method
+   *   The method which will be used to send request to Shipwire.
    * @return array
    *   The response array which contains keys:
-   *   request - The raw request XML
-   *   data - The raw response XML
-   *   data_xml - SimpleXMLElement conversion of raw XML
-   *   data_json - JSON conversion of raw XML. Not production ready.
+   *    data - The response data
+   * @throws \Exception
    */
-  protected function sendRequest($method, $xml) {
-    $log_xml_request = variable_get('shipwire_log_xml_request', 0);
-    $log_xml_response = variable_get('shipwire_log_xml_response', 0);
-
-    if ($log_xml_request) {
-      $message = t('Sent @method XML request: @xml', array('@method' => $method, '@xml' => $xml));
-      watchdog('shipwire', $message, array(), WATCHDOG_DEBUG);
-    }
-
-    $error_tag = 'ErrorMessage';
+  protected function sendRequest($method, $data, $request_method = 'GET', $order_id = NULL) {
+    $headers = array('Content-Type' => 'application/json');
     switch ($method) {
       case 'rate':
-        $url = self::$endpoint . 'RateServices.php';
-        $data = "RateRequestXML=" . trim($xml);
-        $error_tag = 'Error';
+        $url = self::$endpoint . 'rate';
         break;
 
       case 'fulfill':
-        $url = self::$endpoint . 'FulfillmentServices.php';
-        $data = "OrderListXML=" . trim($xml);
+        $url = self::$endpoint . 'orders';
         break;
 
-      case 'test':
       case 'tracking':
-        $url = self::$endpoint . 'TrackingServices.php';
-        $data = "TrackingUpdateXML=" . trim($xml);
+        $url = self::$endpoint . self::getRoute('orders/E{id}/trackings', $order_id);
         break;
 
       case 'inventory':
-        $url = self::$endpoint . 'InventoryServices.php';
-        $data = "InventoryUpdateXML=" . trim($xml);
+        $url = self::$endpoint . 'stock';
+        break;
+
+      case 'cancel':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/cancel', $order_id);
+        break;
+
+      case 'holds':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/holds', $order_id);
+        break;
+
+      case 'items':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/items', $order_id);
+        break;
+
+      case 'returns':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/returns', $order_id);
+        break;
+
+      case 'order_update':
+        $url = self::$endpoint . self::getRoute('orders/E{id}', $order_id);
+        break;
+
+      case 'address_validate':
+        $endpoint = str_replace('v3', 'v3.1', self::$endpoint);
+        $url = $endpoint . 'addressValidation';
+        break;
+
+      case 'stock':
+        if(empty($data)) {
+          $url = self::$endpoint . 'stock';
+        }
+        else {
+          $url = self::$endpoint . 'stock?' . $data;
+        }
         break;
     }
-
-    if (!self::operational() && $method != 'test') {
-      self::logError(t('Shipwire is not configured properly.') . ' ' . l(t('Configure Shipwire'), 'admin/shipwire/settings'), WATCHDOG_CRITICAL);
-      return FALSE;
+    if($method != 'fulfill' && $method != 'rate' && $method != 'order_update') {
+      $response = drupal_http_request($url, array(
+        'headers' => $headers,
+        'method' => $request_method,
+      ));
     }
-
-    // Setup the cURL request.
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_VERBOSE, 0);
-    curl_setopt($ch, CURLOPT_POST, 1);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $data);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 1);
-    curl_setopt($ch, CURLOPT_NOPROGRESS, 1);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 0);
-    $response = curl_exec($ch);
-    $error = curl_error($ch);
-    curl_close($ch);
-
-    if (!empty($response) && $log_xml_response) {
-      $message = t('Sent @method XML response: @xml', array('@method' => $method, '@xml' => $response));
-      watchdog('shipwire', $message, array(), WATCHDOG_DEBUG);
+    else {
+      $response = drupal_http_request($url, array(
+        'headers' => $headers,
+        'method' => $request_method,
+        'data' => $data,
+      ));
     }
-
-    if ($error) {
+    if (isset($response->code) && $response->code == '200') {
+      $response_data = $response->data;
+      return array(
+        'data' => json_decode($response_data),
+      );
+    }
+    else {
+      $error = $response->code;
       $message = 'Error in @method request communication: @error';
-      $message_vars = array('@method' => $method, '@error' => check_plain($error));
+      $message_vars = array(
+        '@method' => $method,
+        '@error' => check_plain($error)
+      );
       throw new Exception(t($message, $message_vars));
+
     }
-
-    $data_xml = new SimpleXMLElement($response);
-    $data_json = drupal_json_decode(drupal_json_encode($data_xml));
-
-    if ((string) $data_xml->Status == 'Error') {
-      $message = 'Error in @method response: @error';
-      $message_vars = array('@method' => $method, '@error' => check_plain((string) $data_xml->{$error_tag}));
-      throw new Exception(t($message, $message_vars));
-    }
-
-    return array(
-      'request' => $data,
-      'data' => $response,
-      'data_xml' => $data_xml,
-      'data_json' => $data_json,
-    );
   }
 
   /**
    * Log error to screen and possibly watchdog.
-   * 
+   *
    * If the user executing requests has sufficient permission then error messages
    * are displayed on screen. All warnings and error are logged using Watchdog.
    * Optionally WATCHDOG_DEBUG and WATCHDOG_INFO messages can be looged depending
    * on user preferences.
-   * 
+   *
    * @param string $message
    *   Untranslated text message [not passed through t()]. It can contain
-   *   standard drupal replacement patterns.  
+   *   standard drupal replacement patterns.
    * @param array $variables
    *   Array of replacement pattern values keyed by replacement pattern.
    * @param int $watchdog_severity
@@ -1144,10 +1085,10 @@ class ShipwireAddress {
 
   /**
    * Set shipping address receiver name. Required.
-   * 
+   *
    * @param string $full_name
    *   The receivers full name limited to 25 chracters.
-   * 
+   *
    * @throws Exception
    *   Exception when name is empty.
    */
@@ -1163,10 +1104,10 @@ class ShipwireAddress {
 
   /**
    * Set the first line of the shipping address. Required.
-   * 
+   *
    * @param string $address1
    *   The first line of the address limited to 25 characters.
-   * 
+   *
    * @throws Exception
    *   Exception when empty.
    */
@@ -1182,7 +1123,7 @@ class ShipwireAddress {
 
   /**
    * Set the second line of the shipping address. Optional.
-   * 
+   *
    * @param string $address2
    *   The second line of the address limited to 25 characters.
    */
@@ -1195,7 +1136,7 @@ class ShipwireAddress {
 
   /**
    * Set the third line of the shipping address. Optional.
-   * 
+   *
    * @param string $address3
    *   The third line of the address limited to 25 characters.
    */
@@ -1208,10 +1149,10 @@ class ShipwireAddress {
 
   /**
    * Set the shipping address city. Required.
-   * 
+   *
    * @param string $city
    *   The address city text limited to 25 characters.
-   * 
+   *
    * @throws Exception
    *   Exception when empty.
    */
@@ -1227,17 +1168,17 @@ class ShipwireAddress {
 
   /**
    * Set the shipping address state/province and country.
-   * 
+   *
    * State format varies depending on country. If country is USA (US) or Canada
    * (CA) then the state must be a valid two letter state code. For all other
    * countries the state/province is the full text limited to 25 characters.
-   * 
+   *
    * @param string $state
    *   Two letter state code for US and CA countries. Otherwise full text
    *   limited to 25 characters.
    * @param string $country
    *   Two letter country code as defined in ISO 3166 standard.
-   * 
+   *
    * @throws Exception
    *   If invalid country or state codes are used.
    */
@@ -1265,7 +1206,7 @@ class ShipwireAddress {
 
   /**
    * Set the shipping adress postal/zip code.
-   * 
+   *
    * @param string $postal_code
    *   Postal/Zip code limited to 25 characters.
    */
@@ -1278,10 +1219,10 @@ class ShipwireAddress {
 
   /**
    * Set commercial address flag.
-   * 
+   *
    * @param bool $boolean
    *   TRUE if the shipping address is to a commercial location.
-   * 
+   *
    * @throws Exception
    */
   public function setCommercial($boolean) {
@@ -1295,10 +1236,10 @@ class ShipwireAddress {
 
   /**
    * Set PO Box shipping address flag.
-   * 
+   *
    * @param bool $boolean
    *   TRUE if the ship[ping address is to a PO box.
-   * 
+   *
    * @throws Exception
    */
   public function setPoBox($boolean) {
@@ -1312,12 +1253,12 @@ class ShipwireAddress {
 
   /**
    * Set customer's email address.
-   * 
+   *
    * Email address is used by Shipwire to provide 'Delight' tools which can be
    * used to notify customer of shipment status.
-   * 
+   *
    * @param string $email
-   *   A valid email address. 
+   *   A valid email address.
    */
   public function setEmail($email) {
     if (valid_email_address($email)) {
@@ -1327,9 +1268,9 @@ class ShipwireAddress {
 
   /**
    * Set customer's telephone number.
-   * 
+   *
    * Used if shipment carrier needs to get in contact with the customer.
-   * 
+   *
    * @param string $phone
    *   The telephone number limited to 50 characters.
    */
@@ -1342,7 +1283,7 @@ class ShipwireAddress {
 
   /**
    * Get the address properties as a keyed array.
-   * 
+   *
    * @return array
    */
   public function toArray() {
@@ -1350,10 +1291,18 @@ class ShipwireAddress {
   }
 
   /**
+   * Get the address properties as json.
+   * @return string
+   */
+  public function toJson() {
+    return json_encode($this->toArray());
+  }
+
+  /**
    * Validate the address ensuring all required properties are present.
-   * 
+   *
    * Required properties include: name, address1, city, country.
-   * 
+   *
    * @throws Exception
    */
   public function validate() {
@@ -1369,11 +1318,11 @@ class ShipwireAddress {
 
 /**
  * Object used to build a Rate request order item.
- * 
+ *
  * Used as a sub element of ShipwireRateRequest. Requires order_id, address, and
  * products array. Optionally set warehouse filters to control where the
  * shipment will be sent from. Warehouse '00' indicates the default auto
- * selection of warehouse.  
+ * selection of warehouse.
  */
 class ShipwireRateRequestOrder {
 
@@ -1399,13 +1348,13 @@ class ShipwireRateRequestOrder {
 
   /**
    * Set the order id used in the local store to reference the original order.
-   * 
+   *
    * If using multiple online stores with one Shipwire account then the order id
    * must ensured to be unique preferably by adding a prefix code.
-   *  
+   *
    * @param string $order_id
    *   Unique order id used by the local software to idenitify and order.
-   * 
+   *
    * @throws Exception
    *   If order id is empty.
    */
@@ -1420,10 +1369,10 @@ class ShipwireRateRequestOrder {
 
   /**
    * Set the warehouse code to restrict shipment to this warehouse.
-   * 
+   *
    * @param string $warehouse_code
    *   The Shipwire warehouse code. See getWarehouseCodes() for valid codes.
-   * 
+   *
    * @throws Exception
    *   If a warehouse code is not valid.
    */
@@ -1439,7 +1388,7 @@ class ShipwireRateRequestOrder {
 
   /**
    * Set the shipping address for the order.
-   * 
+   *
    * @param ShipwireAddress $address
    *   The populated shipping address in shipwire format.
    */
@@ -1449,9 +1398,9 @@ class ShipwireRateRequestOrder {
 
   /**
    * Add a product line item to the order.
-   * 
+   *
    * @param ShipwireProduct $product
-   *   The product information in Shipwire format. 
+   *   The product information in Shipwire format.
    */
   public function addProduct(ShipwireProduct $product) {
     if (!is_array($this->products)) {
@@ -1462,12 +1411,12 @@ class ShipwireRateRequestOrder {
 
   /**
    * Add an array of products to an order.
-   * 
+   *
    * @param array $products
    *   Array of ShipwireProduct objects.
    * @param bool $reset
    *   TRUE to delete current products, FALSE to append products.
-   * 
+   *
    * @throws Exception
    */
   public function addProducts($products, $reset = FALSE) {
@@ -1486,10 +1435,10 @@ class ShipwireRateRequestOrder {
 
   /**
    * Remove a product from the order array.
-   * 
+   *
    * @param int $key
    *   The product array key.
-   * 
+   *
    * @throws Exception
    */
   public function deleteProduct($key) {
@@ -1506,10 +1455,10 @@ class ShipwireRateRequestOrder {
 
   /**
    * Validate the shipment order checking required properties are set.
-   * 
+   *
    * Required properties include: order_id, address, products.
    * Address validation is also triggered.
-   *  
+   *
    * @throws Exception
    */
   public function validate() {
@@ -1563,13 +1512,13 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set the order id used in the local store to reference the original order.
-   * 
+   *
    * If using multiple online stores with one Shipwire account then the order id
    * must ensured to be unique preferably by adding a prefix code.
-   *  
+   *
    * @param string $order_id
    *   Unique order id used by the local software to idenitify and order.
-   * 
+   *
    * @throws Exception
    *   If order id is empty.
    */
@@ -1584,10 +1533,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set the warehouse code to restrict shipment to this warehouse.
-   * 
+   *
    * @param string $warehouse_code
    *   The Shipwire warehouse code. See getWarehouseCodes() for valid codes.
-   * 
+   *
    * @throws Exception
    *   If a warehouse code is not valid.
    */
@@ -1603,10 +1552,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set warehouse country code to restrict shipment to originate from country.
-   * 
+   *
    * @param string $country_code
    *   ISO 3166 two digit country code.
-   * 
+   *
    * @throws Exception
    */
   public function setWarehouseCountry($country_code) {
@@ -1621,11 +1570,11 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set warehouse continent to force shipment to originate from continent.
-   * 
+   *
    * @param string $continent_code
    *   Valid Shipwire warehouse continent code. See getWarehouseContinents() for
    *   list of valid codes.
-   * 
+   *
    * @throws Exception
    */
   public function addWarehouseContinent($continent_code) {
@@ -1643,13 +1592,13 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set array of warehouse continents to force shipment to originate from them.
-   * 
+   *
    * @param array $continents
    *   Array of valid Shipwire warehouse continent code.
    *   See getWarehouseContinents() for list of valid codes.
    * @param bool $reset
    *   TRUE to delete current continents, FALSE to append continents.
-   * 
+   *
    * @throws Exception
    */
   public function setWarehouseCountinents(array $continents, $reset = FALSE) {
@@ -1671,7 +1620,7 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set the shipping address for the order.
-   * 
+   *
    * @param ShipwireAddress $address
    *   The populated shipping address in shipwire format.
    */
@@ -1681,9 +1630,9 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Add a product line item to the order.
-   * 
+   *
    * @param ShipwireProduct $product
-   *   The product information in Shipwire format. 
+   *   The product information in Shipwire format.
    */
   public function addProduct(ShipwireProduct $product) {
     if (!is_array($this->products)) {
@@ -1694,12 +1643,12 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Add an array of products to an order.
-   * 
+   *
    * @param array $products
    *   Array of ShipwireProduct objects.
    * @param bool $reset
    *   TRUE to delete current products, FALSE to append products.
-   * 
+   *
    * @throws Exception
    */
   public function addProducts($products, $reset = FALSE) {
@@ -1718,10 +1667,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Remove a product from the order array.
-   * 
+   *
    * @param int $key
    *   The product array key.
-   * 
+   *
    * @throws Exception
    */
   public function deleteProduct($key) {
@@ -1738,10 +1687,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set 'hold' flag for shipment indicating it will not ship until cleared.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to hold shipment.
-   * 
+   *
    * @throws Exception
    */
   public function setHold($boolean) {
@@ -1755,14 +1704,14 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set 'force duplicate' flag to ship orders that appear to be the same.
-   * 
+   *
    * The default setting of FALSE will cause Shipwire to check shipments. If a
    * duplicate order is found then the shipment will be held and will require
    * manual clearance.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to allow shipments that appear to be duplicates. Default is FALSE.
-   * 
+   *
    * @throws Exception
    */
   public function setForceDuplicate($boolean) {
@@ -1776,15 +1725,15 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set 'can split' tag allowing backordered products to be shipped later.
-   * 
+   *
    * By default Shipwire will hold an order that contains out of stock products.
    * If this option is set to TRUE then available products will be shipped
    * immediately and another shipment will eb sent later when backordered
    * products are restocked.
-   *   
+   *
    * @param bool $boolean
    *   Default FALSE. TRUE to allow order to be split into multiple shipments.
-   * 
+   *
    * @throws Exception
    */
   public function setCanSplit($boolean) {
@@ -1798,20 +1747,24 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set 'same day' flag indicating level of same day service requested.
-   * 
+   *
    * Default setting is NOT REQUESTED. Other setting will incurr additional
    * shipping costs.
-   * 
+   *
    * @param string $same_day
    *   One of the following values:
    *   'NOT REQUESTED' - default
    *   'REQUESTED' - if easily possible to ship same day
    *   'GUARANTEED' - force priority shipping
-   * 
+   *
    * @throws Exception
    */
   public function setSameDay($same_day) {
-    if (in_array($same_day, array('NOT REQUESTED', 'REQUESTED', 'GUARANTEED'))) {
+    if (in_array($same_day, array(
+      'NOT REQUESTED',
+      'REQUESTED',
+      'GUARANTEED'
+    ))) {
       $this->same_day = $same_day;
     }
     else {
@@ -1821,11 +1774,11 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set hold shipment on shipment until specified date.
-   * 
+   *
    * @param date $date
    *   A unix timestamp indicating when the shipment should be sent.
    *   Ignored if in the past.
-   * 
+   *
    * @throws Exception
    */
   public function setDoNotShipBefore($date) {
@@ -1854,10 +1807,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Set the Shipwire shipping method.
-   * 
+   *
    * @param string $shipping_method
    *   Shipwire shipping method code. See getShippingMethods() for valid codes.
-   * 
+   *
    * @throws Exception
    */
   public function setShipping($shipping_method) {
@@ -1872,10 +1825,10 @@ class ShipwireFulfillRequestOrder {
 
   /**
    * Validate the fulfillment request checking required properties are set.
-   * 
+   *
    * Required properties include: order_id, address, products.
    * Address validation is also triggered.
-   *  
+   *
    * @throws Exception
    */
   public function validate() {
@@ -1927,7 +1880,7 @@ class ShipwireProduct {
 
   /**
    * Set the unique product SKU/model indentifier.
-   * 
+   *
    * @param string $sku
    *   A string used to identify the product.
    *
@@ -1944,10 +1897,10 @@ class ShipwireProduct {
 
   /**
    * Set product quantity requested.
-   * 
+   *
    * @param int $quantity
    *   The number of this product in the shipment.
-   * 
+   *
    * @throws Exception
    */
   public function setQuantity($quantity) {
@@ -1962,12 +1915,12 @@ class ShipwireProduct {
 
   /**
    * Set product cost used for shipment insurance and customs calculation.
-   * 
+   *
    * @param float $cost
    *   The cost of the product.
    * @param string $currency
    *   The three digit currency code as in ISO 4217.
-   * 
+   *
    * @throws Exception
    */
   public function setCost($cost, $currency) {
@@ -1988,7 +1941,7 @@ class ShipwireProduct {
 
   /**
    * Get the product properties as a keyed array.
-   * 
+   *
    * @return array
    *   Array of product properties.
    */
@@ -2027,13 +1980,13 @@ Class ShipwireRateRequest {
 
   /**
    * Set the currency used to format the rate response costs.
-   * 
-   * Shipwire currently supports a limited number of currencies. 
+   *
+   * Shipwire currently supports a limited number of currencies.
    * See getCurrencies() for valid codes.
-   * 
+   *
    * @param string $currency
    *   ISO 4217 three character currency code.
-   * 
+   *
    * @throws Exception
    */
   public function setCurrency($currency) {
@@ -2048,10 +2001,10 @@ Class ShipwireRateRequest {
 
   /**
    * Not document in Shipwire RateRequest API.
-   * 
+   *
    * @param string $rateset
    *   Either 'all' or 'shipwire'.
-   * 
+   *
    * @throws Exception
    */
   public function setRateset($rateset) {
@@ -2065,7 +2018,7 @@ Class ShipwireRateRequest {
 
   /**
    * Add a ShipwireRateRequestOrder to the request.
-   * 
+   *
    * @param ShipwireRateRequestOrder $order
    *   Fully populated Shipwire rate request order.
    */
@@ -2075,10 +2028,10 @@ Class ShipwireRateRequest {
 
   /**
    * Remove a ShipwireRateRequestOrder from the request.
-   * 
+   *
    * @param int $key
    *   The array key of the order in the $this->orders array.
-   * 
+   *
    * @throws Exception
    */
   public function deleteOrder($key) {
@@ -2095,9 +2048,9 @@ Class ShipwireRateRequest {
 
   /**
    * Validate the current request checking all required properties are set.
-   * 
+   *
    * Request requires a currency and an array of valid orders.
-   * 
+   *
    * @throws Exception
    */
   public function validate() {
@@ -2141,7 +2094,7 @@ class ShipwireFulfillRequest {
 
   /**
    * Add a ShipwireRateRequestOrder to the request.
-   * 
+   *
    * @param ShipwireRateRequestOrder $order
    *   Fully populated Shipwire rate request order.
    */
@@ -2154,10 +2107,10 @@ class ShipwireFulfillRequest {
 
   /**
    * Remove a ShipwireRateRequestOrder from the request.
-   * 
+   *
    * @param int $key
    *   The array key of the order in the $this->orders array.
-   * 
+   *
    * @throws Exception
    */
   public function deleteOrder($key) {
@@ -2174,10 +2127,10 @@ class ShipwireFulfillRequest {
 
   /**
    * Set the name of the drupal module that is initiating the request.
-   * 
+   *
    * @param string $store_module
    *   A valid and currently active drupal module name.
-   * 
+   *
    * @throws Exception
    */
   public function setModule($store_module) {
@@ -2196,9 +2149,9 @@ class ShipwireFulfillRequest {
 
   /**
    * Validate the fulfillment request ensuring all required properties are set.
-   * 
+   *
    * The request requires an array of orders.
-   * 
+   *
    * @throws Exception
    */
   public function validate() {
@@ -2248,20 +2201,20 @@ class ShipwireTrackingRequest {
 
   /**
    * Set bookmark type and use bookmark method to get tracking information.
-   * 
-   * 1 - All Orders: Returns tracking information for all orders in the 
+   *
+   * 1 - All Orders: Returns tracking information for all orders in the
    *  Shipwire account [DEPRECATED]
    * 2 - Orders since last bookmark: Returns tracking information for all orders
-   *  updated since the last bookmark was set (see "3" below). 
+   *  updated since the last bookmark was set (see "3" below).
    * 3 - Update bookmark: Returns tracking information for all orders updated
    *  since the last bookmark was set, and then updates the bookmark to now.
-   * 
+   *
    * Bookmarks have not proven to be a reliable method of getting information.
    * It is recommended to use the ShipwireID or OrderID methods instead.
-   * 
+   *
    * @param int $bookmark_type
    *   Integer 1, 2, or 3 indicating the type of bookmark.
-   * 
+   *
    * @throws Exception
    */
   public function setBookmark($bookmark_type) {
@@ -2284,10 +2237,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Add a locally used unique order id to get tracking info for it.
-   * 
+   *
    * @param string $order_id
    *   The order id previously submitted to shipwire for fulfillment.
-   * 
+   *
    * @throws Exception
    */
   public function addOrderId($order_id) {
@@ -2313,10 +2266,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Add a shipwire id to get tracking info for it.
-   * 
+   *
    * @param string $shipwire_id
    *   The unique id used remotely by Shipwire to identify a shipment.
-   * 
+   *
    * @throws Exception
    */
   public function addShipwireId($shipwire_id) {
@@ -2340,10 +2293,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Set 'shipped only' flag limiting response to shipments that have shipped.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to limit response to shipments that have shipped.
-   * 
+   *
    * @throws Exception
    */
   public function setShippedOnly($boolean) {
@@ -2357,10 +2310,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Set 'held only' flag limiting response to shipments that are held.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to limit response to shipments that are held.
-   * 
+   *
    * @throws Exception
    */
   public function setHeldOnly($boolean) {
@@ -2374,10 +2327,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Set 'include holds' flag to get additional hold error messages.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to get shipment hold error information.
-   * 
+   *
    * @throws Exception
    */
   public function setIncludeHolds($boolean) {
@@ -2391,10 +2344,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Set 'include items' flag to get additional info on products in shipment.
-   * 
+   *
    * @param bool $boolean
    *   TRUE to get information on products in shipment.
-   * 
+   *
    * @throws Exception
    */
   public function setIncludeItems($boolean) {
@@ -2408,10 +2361,10 @@ class ShipwireTrackingRequest {
 
   /**
    * Set flag to include information about related orders (return, replacement).
-   * 
+   *
    * @param bool $boolean
    *   TRUE to get additional related order information.
-   * 
+   *
    * @throws Exception
    */
   public function setIncludeRelatedOrders($boolean) {
@@ -2425,12 +2378,12 @@ class ShipwireTrackingRequest {
 
   /**
    * Validate the request ensuring all required properties are set.
-   * 
+   *
    * The request can use only one method of getting tracking information.
    * Order id - a list of order IDs to check.
    * Shipwire id - a list of Shipwire IDs to check.
    * Bookmark - an integer specifying the bookmark method.
-   * 
+   *
    * @throws Exception
    */
   public function validate() {
@@ -2507,10 +2460,10 @@ class ShipwireInventoryRequest {
 
   /**
    * Set the warehouse code to restrict shipment to this warehouse.
-   * 
+   *
    * @param string $warehouse_code
    *   The Shipwire warehouse code. See getWarehouseCodes() for valid codes.
-   * 
+   *
    * @throws Exception
    *   If a warehouse code is not valid.
    */
@@ -2526,10 +2479,10 @@ class ShipwireInventoryRequest {
 
   /**
    * Set warehouse country code to force shipment to originate from country.
-   * 
+   *
    * @param string $country_code
    *   ISO 3166 two digit country code.
-   * 
+   *
    * @throws Exception
    */
   public function setWarehouseCountry($country_code) {
@@ -2544,11 +2497,11 @@ class ShipwireInventoryRequest {
 
   /**
    * Set warehouse continent to force shipment to originate from continent.
-   * 
+   *
    * @param string $continent_code
    *   Valid Shipwire warehouse continent code. See getWarehouseContinents() for
    *   list of valid codes.
-   * 
+   *
    * @throws Exception
    */
   public function addWarehouseContinent($continent_code) {
@@ -2566,13 +2519,13 @@ class ShipwireInventoryRequest {
 
   /**
    * Set array of warehouse continents to force shipment to originate from them.
-   * 
+   *
    * @param array $continents
    *   Array of valid Shipwire warehouse continent code.
    *   See getWarehouseContinents() for list of valid codes.
    * @param bool $reset
    *   TRUE to delete current continents, FALSE to append continents.
-   * 
+   *
    * @throws Exception
    */
   public function setWarehouseCountinents(array $continents, $reset = FALSE) {
@@ -2594,10 +2547,10 @@ class ShipwireInventoryRequest {
 
   /**
    * Add product SKU/model to check it's stock level.
-   * 
+   *
    * @param string $sku
    *   Unique product identifier used in store and Shipwire.
-   * 
+   *
    * @throws Exception
    */
   public function addProductSku($sku) {
