@@ -57,12 +57,12 @@ class Shipwire {
   public function requestFulfillment(ShipwireFulfillRequest $request) {
     $request->validate();
     if (self::operational()) {
-      return self::sendRequest('fulfill', self::buildRestFulfill($request), 'POST');
+      return self::sendRequest('fulfill', self::buildRestOrder($request), 'POST');
     }
   }
 
   /**
-   * Sends API request for order shipping rate.
+    * Sends API request for order shipping rate.
    *
    * @param ShipwireRateRequest $rate_request
    *   The populated rate request.
@@ -73,39 +73,115 @@ class Shipwire {
   public function requestRate(ShipwireRateRequest $rate_request) {
     $rate_request->validate();
     if (self::operational()) {
-      return self::sendRequest('rate', self::buildRequestRate($rate_request));
+      return self::sendRequest('rate', self::buildRequestRate($rate_request), 'POST');
     }
   }
 
   /**
-   * Sends API request for tracking update.
-   *
-   * @param ShipwireTrackingRequest $request
-   *   The populated tracking request.
-   *
-   * @return FALSE|array
-   *   FALSE on error or response array on success.
+   * Transform the route with the given orderId
+   * @param $route
+   * @param null $order_id
+   * @return string
    */
-  public function requestTracking(ShipwireTrackingRequest $request) {
-    $request->validate();
+  private function getRoute($route, $order_id = NULL) {
+    if ($order_id !== NULL) {
+      return strtr($route, ['{id}' => $order_id]);
+    }
+    return $route;
+  }
+
+  /**
+   * @param array $params
+   * @param bool $includeEmpty
+   * @return array
+   * @throws \Exception
+   */
+  public function getStock($params = [], $includeEmpty=false) {
+    if ($includeEmpty){
+      $params['includeEmpty'] = 1;
+    }
+
+    return self::sendRequest('stock', http_build_query($params), 'GET');
+  }
+
+  /**
+   * Cancels an Order
+   * @param $order_id
+   * @return bool
+   */
+  public function cancel($order_id) {
     if (self::operational()) {
-      return self::sendRequest('tracking', self::buildXmlTracking($request));
+      return self::sendRequest('cancel', ' ', 'POST', $order_id);
+    }
+  }
+
+
+  /**
+   * Get the list of holds, if any, on an order
+   * @param $order_id
+   * @return array
+   */
+  public function holds($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('holds', ' ', 'GET', $order_id);
     }
   }
 
   /**
-   * Sends API request for inventory update.
-   *
-   * @param ShipwireInventoryRequest $request
-   *   The populated inventory request.
-   *
-   * @return FALSE|array
-   *   FALSE on error or response array on success.
+   * Get the product details for this order
+   * @param $order_id
+   * @return array
    */
-  public function requestInventory(ShipwireInventoryRequest $request) {
-    $request->validate();
+  public function items($order_id) {
     if (self::operational()) {
-      return self::sendRequest('inventory', self::buildXmlInventory($request));
+      return self::sendRequest('items', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * Get related return information for a specific order.
+   * @param $order_id
+   * @return array
+   */
+  public function returns($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('returns', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * Get tracking information for a specific order.
+   * @param $order_id
+   * @return array
+   */
+  public function tracking($order_id) {
+    if (self::operational()) {
+      return self::sendRequest('tracking', ' ', 'GET', $order_id);
+    }
+  }
+
+  /**
+   * @param \ShipwireFulfillRequest $request
+   * @param $order_id
+   * @return array
+   * @throws \Exception
+   */
+  public function updateOrder(ShipwireFulfillRequest $request, $order_id) {
+    if (self::operational()) {
+      return self::sendRequest('order_update', self::buildRestOrder($request), 'PUT', $order_id);
+    }
+  }
+
+
+  /**
+   * @param \ShipwireAddress $address
+   * @return array
+   * @throws \Exception
+   */
+  public function adressValidate(ShipwireAddress $address) {
+    if (self::operational()) {
+      $json_adddress = self::buildRestAddressInfo($address);
+      return self::sendRequest('address_validate', $json_adddress, 'GET');
     }
   }
 
@@ -117,8 +193,6 @@ class Shipwire {
    */
   public function requestTest() {
     try {
-      // $request = new ShipwireTrackingRequest();
-      // $request->setBookmark(2);
       $response = self::sendRequest('fulfill', '', 'GET');
       if ($response['data']->status == 200) {
         variable_set('shipwire_operational', TRUE);
@@ -134,59 +208,49 @@ class Shipwire {
   }
 
   /**
-   * Build the AddressInfo XML.
-   *
-   * @param Shipwire $xml_element
-   *   The request XML element.
+   * Build the AddressInfo.
    * @param ShipwireAddress $address
    *   A populated Shipwire Address.
    * @param string $method
    *   The type of Shipwire request this address will be used in. Options are:
    *   'rate' or 'fulfill'.
    */
-  protected function buildXmlAddressInfo(ShipwireSimpleXMLElement &$xml_element, ShipwireAddress $address, $method = 'rate') {
+  protected function buildRestAddressInfo(ShipwireAddress $address, $method = 'rate') {
     $email_share = variable_get('shipwire_email_share', FALSE);
 
-    $address_info = $xml_element->addChild('AddressInfo');
-    $address_info->addAttribute('type', 'ship');
-    $name = $address_info->addChild('Name');
-    $name->addChildCData('Full', $address->name);
+    $address_info = array();
+    $address_info['name'] = $address->name;
 
     if (!empty($address->company)) {
-      $address_info->addChildCData('Company', $address->company);
+      $address_info['company'] = $address->company;
     }
-    $address_info->addChildCData('Address1', $address->address1);
+    $address_info['address1'] = $address->address1;
     if (!empty($address->address2)) {
-      $address_info->addChildCData('Address2', $address->address2);
+      $address_info['Address2'] = $address->address2;
     }
     if (!empty($address->address3)) {
-      $address_info->addChildCData('Address3', $address->address3);
+      $address_info['address3'] = $address->address3;
     }
-    $address_info->addChildCData('City', $address->city);
+    $address_info['city'] = $address->city;
     if (!empty($address->state)) {
-      $address_info->addChildCData('State', $address->state);
+      $address_info['state'] = $address->state;
     }
-    $address_info->addChildCData('Country', $address->country);
+    $address_info['country'] = $address->country;
     // Is postal required?
     if (!empty($address->postal)) {
-      $address_info->addChildCData('Zip', $address->postal);
+      $address_info['postalCode'] = $address->postal;
     }
     if (!empty($address->phone) && $method == 'fulfill') {
-      $address_info->addChildCData('Phone', $address->phone);
+      $address_info['phone'] = $address->phone;
     }
     if ($email_share && !empty($address->email) && $method == 'fulfill') {
-      $address_info->addChildCData('Email', $address->email);
+      $address_info['Email'] = $address->email;
     }
-    if (!empty($address->commercial)) {
-      $address_info->addChild('Commercial');
-    }
-    if (!empty($address->pobox)) {
-      $address_info->addChild('PoBox');
-    }
+    $address_info = json_encode($address_info);
+    return $address_info;
   }
 
   /**
-   * @todo rebuild to use rest 2 step
    * Builds REST API request for Order API.
    *
    * @param ShipwireFulfillRequest $request
@@ -195,10 +259,9 @@ class Shipwire {
    * @return string
    *   The raw json fulfillment request REST.
    */
-  protected function buildRestFulfill(ShipwireFulfillRequest $request) {
-
+  protected function buildRestOrder(ShipwireFulfillRequest $request) {
     $data = array();
-    if (!empty($request->company)) {
+    if (isset($request->company) && !empty($request->company)) {
       $company = $request->company;
     }
 
@@ -209,33 +272,30 @@ class Shipwire {
         $referer .= ' ' . $module_info['name'] . ' ' . $module_info['version'];
       }
     }
+
     foreach ($request->orders as $order) {
-      echo '<pre>';
-      print_r($order);
-      echo '</pre>';
-      exit;
       $data['orderNo'] = $order->order_id;
       $data['externalId'] = $order->order_id;
       $data['options'] = array(
         'warehouseId' => $order->warehouse,
         'warehouseExternalId' => $order->warehouse,
-        'warehouseRegion' => $order->warehouse_continents,
-        'warehouseArea' => $order->warehouse_country,
+        'warehouseRegion' => isset($order->warehouse_continents) ? $order->warehouse_continents : '',
+        'warehouseArea' => isset($order->warehouse_country) ? $order->warehouse_country : '',
       );
-      $data['shipFrom'] = $company;
+      $data['shipFrom'] = variable_get('site_name');
       $data['shipTo'] = array(
-        "email" =>  $order->address->email,
+        "email" => $order->address->email,
         "name" => $order->address->name,
         "address1" => $order->address->address1,
-        "address2" => $order->address->address2,
-        "address3" => $order->address->address3,
-        "city" => $order->address->city,
-        "state" => $order->address->state,
-        "postalCode"  => $order->address->postal,
-        "country" => $order->address->country,
-        "phone" => $order->address->phone,
-        "isCommercial" =>  !empty($order->address->commercial) ? 1 : 0,
-        "isPoBox" =>  !empty($order->address->pobox) ? 1 : 0,
+        "address2" => isset($order->address->address2) ? $order->address->address2 : '',
+        "address3" => isset($order->address->address3) ? $order->address->address2 : '',
+        "city" => isset($order->address->city) ? $order->address->city : '',
+        "state" => isset($order->address->state) ? $order->address->state : '',
+        "postalCode" => isset($order->address->postal) ? $order->address->postal : '',
+        "country" => isset($order->address->country) ? $order->address->country : '',
+        "phone" => isset($order->address->phone) ? $order->address->phone : '',
+        "isCommercial" => !empty($order->address->commercial) ? 1 : 0,
+        "isPoBox" => !empty($order->address->pobox) ? 1 : 0,
       );
 
 
@@ -256,110 +316,8 @@ class Shipwire {
         );
       }
     }
+
     return json_encode($data);
-  }
-
-  /**
-   * Build XML for an inventory update request.
-   *
-   * @return string
-   *   The raw inventory request XML.
-   */
-  protected function buildXmlInventory(ShipwireInventoryRequest $request) {
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('InventoryUpdate'));
-    $xml->addLogin(self::accountLoad(), 'inventory');
-
-    if (!empty($request->warehouse)) {
-      $xml->addChild('Warehouse', $request->warehouse);
-    }
-
-    if (!empty($request->warehouse_continents) && is_array($request->warehouse_continents)) {
-      $warehouse_continents = $xml->addChild('WarehouseContinents');
-      foreach ($request->warehouse_continents as $continent) {
-        $warehouse_continents->addChild('Continent', $continent);
-      }
-    }
-
-    if (!empty($request->warehouse_country)) {
-      $xml->addChild('warehouse_country', $request->warehouse_country);
-    }
-
-    if (!empty($request->products) && is_array($request->products)) {
-      foreach ($request->products as $product) {
-        $xml->addChildCData('ProductCode', $product);
-      }
-    }
-
-    if (!empty($request->include_empty)) {
-      $xml->addChild('IncludeEmpty');
-    }
-
-    return $xml->asXML();
-  }
-
-  /**
-   * Build XML for tracking request.
-   *
-   * @param ShipwireTrackingRequest $request
-   *   The populated request object.
-   *
-   * @return string
-   *   The raw tracking request XML.
-   */
-  protected function buildXmlTracking(ShipwireTrackingRequest $request) {
-
-    $xml = new ShipwireSimpleXMLElement(self::buildXMLHead('TrackingUpdate'));
-    $xml->addLogin(self::accountLoad(), 'track');
-
-    switch ($request->method) {
-      case 'bookmark':
-        $bookmark = '3';
-        if (!empty($request->bookmark)) {
-          $bookmark = $request->bookmark;
-        }
-        $xml->addChild('Bookmark', $bookmark);
-        break;
-
-      case 'order_number':
-        foreach ($request->orders as $order) {
-          $xml->addChild('OrderNo', $order);
-        }
-        break;
-
-      case 'shipwire_id':
-        foreach ($request->shipwire_ids as $shipwire_id) {
-          $xml->addChild('ShipwireId', $shipwire_id);
-        }
-        break;
-    }
-
-    if (!empty($request->include_shipped_only)) {
-      $xml->addChild('IncludeShippedOnly');
-    }
-    if (!empty($request->include_held_only)) {
-      $xml->addChild('IncludeHeldOnly');
-    }
-    if (!empty($request->include_holds)) {
-      $xml->addChild('IncludeHolds');
-    }
-    if (!empty($request->include_items)) {
-      $xml->addChild('IncludeItems');
-    }
-    if (!empty($request->include_related_orders)) {
-      $xml->addChild('IncludeRelatedOrders');
-    }
-
-    if (!empty($request->results_limit)) {
-      if (!isset($request->results_offset)) {
-        self::logError(t('Result offset must be provided when result limit is used'), WATCHDOG_ERROR);
-      }
-      else {
-        $xml->addChild('ResultsLimit', $request->results_limit);
-        $xml->addChild('ResultsOffset', $request->results_offset);
-      }
-    }
-
-    return $xml->asXML();
   }
 
   /**
@@ -372,11 +330,9 @@ class Shipwire {
    *   The raw rate request json.
    */
   protected function buildRequestRate(ShipwireRateRequest $request) {
-
     $currency = $request->currency;
     $items = array();
     foreach ($request->orders as $order) {
-      $wareHouse = $order->warehouse;
       if (!empty($order->warehouse_continents)) {
         foreach ($order->warehouse_continents as $continent) {
           $WarehouseContinents = $continent;
@@ -394,11 +350,12 @@ class Shipwire {
         $count++;
       }
     }
+
     $options = [
       "currency" => $currency,
       "groupBy" => "all",
       "canSplit" => 1,
-      "warehouseArea" => $wareHouse
+      "warehouseArea" => !empty($WarehouseContinents) ? $WarehouseContinents : "US",
     ];
     $json = json_encode([
       'options' => $options,
@@ -560,14 +517,6 @@ class Shipwire {
   public static function getWarehouseCode($warehouse_name) {
     $warehouses = self::getWarehouses(FALSE);
     $code = array_search($warehouse_name, $warehouses);
-
-    // Workaround for confirmed bug in Shipwire. Warehouse is supposed to be
-    // full name but in the case of 'Los Angeles' it is returned as 'LA'.
-    // To be fixed by Shipwire.
-    if ($warehouse_name == 'LA') {
-      $code = 'LAX';
-    }
-
     if ($code == FALSE) {
       $code = '';
     }
@@ -575,11 +524,6 @@ class Shipwire {
     return $code;
   }
 
-  public function getWarehouseBySku($sku) {
-    $url = self::$endpoint;
-    $url = $url . "stock?sku={$sku}";
-    $response = drupal_http_request($url);
-  }
   /**
    * Return a list of valid warehouse countries.
    *
@@ -950,107 +894,100 @@ class Shipwire {
 
   /**
    * Send and receive all communication.
-   *
-   * @param string $method
+   * @param $method
    *   The API communication method. Possible values are:
-   *   rate, fulfill, tracking, inventory
+   *   rate, fulfill, tracking, inventory, address_check
    *   Do not use 'test' value which is there only to test login info is correct.
-   * @param string $xml
-   *   The raw XML request string that will be sent to Shipwire.
-   *
+   * @param $data
+   *   The raw json request string that will be sent to Shipwire.
+   * @param string $request_method
+   *   The method which will be used to send request to Shipwire.
    * @return array
    *   The response array which contains keys:
-   *   request - The raw request XML
-   *   data - The raw response XML
-   *   data_xml - SimpleXMLElement conversion of raw XML
-   *   data_json - JSON conversion of raw XML. Not production ready.
+   *    data - The response data
+   * @throws \Exception
    */
-  protected function sendRequest($method, $data, $request_method = 'GET') {
+  protected function sendRequest($method, $data, $request_method = 'GET', $order_id = NULL) {
     $headers = array('Content-Type' => 'application/json');
     switch ($method) {
       case 'rate':
         $url = self::$endpoint . 'rate';
-        $request_method = 'POST';
-        $error_tag = 'Error';
-        $data = '{
-
-    "options": {
-
-        "currency": "USD",
-
-        "groupBy": "all",
-
-        "canSplit": 1,
-
-        "warehouseArea": "US"
-
-    },
-    "order": {
-
-        "shipTo": {
-
-            "address1": "6501 Railroad Avenue SE",
-            "address2": "Room 315",
-            "address3": "",
-            "city": "Snoqualmie",
-            "postalCode": "85283",
-            "region": "WA",
-            "country": "US",
-
-            "isCommercial": 0,
-
-            "isPoBox": 0
-        },
-
-        "items": [
-            {
-
-                "sku": "USBPLUG",
-
-                "quantity": 1
-            }
-        ]
-    }
-}
-';
         break;
 
       case 'fulfill':
         $url = self::$endpoint . 'orders';
         break;
 
-      case 'test':
       case 'tracking':
-        $url = self::$endpoint . 'orders/{id}/trackings';
+        $url = self::$endpoint . self::getRoute('orders/E{id}/trackings', $order_id);
         break;
 
       case 'inventory':
         $url = self::$endpoint . 'stock';
         break;
-    }
 
-    $response = drupal_http_request($url, array(
-      'headers' => $headers,
-      'method' => $request_method,
-      'data' => $data,
-    ));
-    dsm($response);
-    $response_data = $response->data;
-    $code = $response->code;
-    if ($code != '200') {
-      $error = $code;
+      case 'cancel':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/cancel', $order_id);
+        break;
+
+      case 'holds':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/holds', $order_id);
+        break;
+
+      case 'items':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/items', $order_id);
+        break;
+
+      case 'returns':
+        $url = self::$endpoint . self::getRoute('orders/E{id}/returns', $order_id);
+        break;
+
+      case 'order_update':
+        $url = self::$endpoint . self::getRoute('orders/E{id}', $order_id);
+        break;
+
+      case 'address_validate':
+        $endpoint = str_replace('v3', 'v3.1', self::$endpoint);
+        $url = $endpoint . 'addressValidation';
+        break;
+
+      case 'stock':
+        if(empty($data)) {
+          $url = self::$endpoint . 'stock';
+        }
+        else {
+          $url = self::$endpoint . 'stock?' . $data;
+        }
+        break;
+    }
+    if($method != 'fulfill' && $method != 'rate' && $method != 'order_update') {
+      $response = drupal_http_request($url, array(
+        'headers' => $headers,
+        'method' => $request_method,
+      ));
+    }
+    else {
+      $response = drupal_http_request($url, array(
+        'headers' => $headers,
+        'method' => $request_method,
+        'data' => $data,
+      ));
+    }
+    if (isset($response->code) && $response->code == '200') {
+      $response_data = $response->data;
+      return array(
+        'data' => json_decode($response_data),
+      );
+    }
+    else {
+      $error = $response->code;
       $message = 'Error in @method request communication: @error';
       $message_vars = array(
         '@method' => $method,
         '@error' => check_plain($error)
       );
       throw new Exception(t($message, $message_vars));
-    }
-    else {
-      return array(
-        'request' => 'data',
-        'data' => json_decode($response_data),
-      );
+
     }
   }
 
